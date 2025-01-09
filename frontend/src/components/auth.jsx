@@ -1,8 +1,9 @@
 import { useState } from "react";
 import { useAuth } from "../contexts/AuthContext";
 import { useNavigate } from "react-router-dom";
-import { validatePassword } from "../utils/validation";
+import { validateUsername, validatePassword } from "../utils/validation";
 import { FormField } from "./FormField";
+import { config, securityConfig } from "../config/env";
 
 export default function Auth() {
   const [isLogin, setIsLogin] = useState(true);
@@ -16,6 +17,8 @@ export default function Auth() {
   const [isLoading, setIsLoading] = useState(false);
   const navigate = useNavigate();
   const { setToken, setUser } = useAuth();
+  const [loginAttempts, setLoginAttempts] = useState(0);
+  const [lockoutUntil, setLockoutUntil] = useState(null);
 
   const handleInputChange = (e) => {
     const { name, value } = e.target;
@@ -30,17 +33,14 @@ export default function Auth() {
     const newErrors = {};
     const { username, password, confirmPassword } = formData;
 
-    if (!username) newErrors.username = "Username is required";
-    if (!password) newErrors.password = "Password is required";
+    const usernameError = validateUsername(username);
+    if (usernameError) newErrors.username = usernameError;
 
-    if (!isLogin) {
-      if (password !== confirmPassword) {
-        newErrors.confirmPassword = "Passwords do not match";
-      }
-      const passwordError = validatePassword(password);
-      if (passwordError) {
-        newErrors.password = passwordError;
-      }
+    const passwordError = validatePassword(password);
+    if (passwordError) newErrors.password = passwordError;
+
+    if (!isLogin && password !== confirmPassword) {
+      newErrors.confirmPassword = "Passwords do not match";
     }
 
     setErrors(newErrors);
@@ -49,12 +49,22 @@ export default function Auth() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+
+    // Check for lockout
+    if (lockoutUntil && new Date() < lockoutUntil) {
+      const remainingTime = Math.ceil((lockoutUntil - new Date()) / 1000 / 60);
+      setErrors({
+        form: `Too many login attempts. Please try again in ${remainingTime} minutes.`,
+      });
+      return;
+    }
+
     if (!validateForm()) return;
 
     setIsLoading(true);
     try {
       const endpoint = isLogin ? "/auth/login" : "/auth/signup";
-      const response = await fetch(`http://localhost:5020${endpoint}`, {
+      const response = await fetch(`${config.API_URL}${endpoint}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -67,8 +77,23 @@ export default function Auth() {
       if (response.ok) {
         setToken(data.token);
         setUser(data.user);
+        setLoginAttempts(0);
+        setLockoutUntil(null);
         navigate("/dashboard");
       } else {
+        if (isLogin) {
+          const newAttempts = loginAttempts + 1;
+          setLoginAttempts(newAttempts);
+
+          if (newAttempts >= securityConfig.MAX_LOGIN_ATTEMPTS) {
+            const lockoutTime = new Date();
+            lockoutTime.setSeconds(
+              lockoutTime.getSeconds() + securityConfig.LOGIN_ATTEMPT_TIMEOUT
+            );
+            setLockoutUntil(lockoutTime);
+          }
+        }
+
         setErrors({
           form: data.error || `Failed to ${isLogin ? "login" : "signup"}`,
         });
