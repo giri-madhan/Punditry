@@ -1,4 +1,4 @@
-# Punditry Frontend
+# Punditry 
 
 A modern web application built with React and Vite, featuring user authentication and a clean, responsive UI.
 
